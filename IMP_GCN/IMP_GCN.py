@@ -1,13 +1,14 @@
 '''
 @author: Liu Fan
 '''
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 import os
 import sys
 os.environ['TF_CPP_MIN_LOG_LEVEL']='0'
 from tensorflow.python.ops.sparse_ops import KeywordRequired
 from utility.helper import *
 from utility.batch_test import *
+tf.disable_v2_behavior()
 
 class IMP_GCN(object):
     def __init__(self, data_config, pretrain_data):
@@ -49,17 +50,17 @@ class IMP_GCN(object):
         Create Placeholder for Input Data & Dropout.
         '''
         # placeholder definition
-        self.users = tf.placeholder(tf.int32, shape=(None,))
-        self.pos_items = tf.placeholder(tf.int32, shape=(None,))
-        self.neg_items = tf.placeholder(tf.int32, shape=(None,))
+        self.users = tf.compat.v1.placeholder(tf.int32, shape=(None,))
+        self.pos_items = tf.compat.v1.placeholder(tf.int32, shape=(None,))
+        self.neg_items = tf.compat.v1.placeholder(tf.int32, shape=(None,))
 
         # dropout: node dropout (adopted on the ego-networks);
         #          ... since the usage of node dropout have higher computational cost,
         #          ... please use the 'node_dropout_flag' to indicate whether use such technique.
         #          message dropout (adopted on the convolution operations).
         self.node_dropout_flag = args.node_dropout_flag
-        self.node_dropout = tf.placeholder(tf.float32, shape=[None])
-        self.mess_dropout = tf.placeholder(tf.float32, shape=[None])
+        self.node_dropout = tf.compat.v1.placeholder(tf.float32, shape=[None])
+        self.mess_dropout = tf.compat.v1.placeholder(tf.float32, shape=[None])
         """
         *********************************************************
         Create Model Parameters (i.e., Initialize Weights).
@@ -98,11 +99,12 @@ class IMP_GCN(object):
 
     def _init_weights(self):
         all_weights = dict()
-        initializer = tf.contrib.layers.xavier_initializer()
+        initializer = tf.keras.initializers.glorot_normal()
 
         if self.pretrain_data is None:
             all_weights['user_embedding'] = tf.Variable(initializer([self.n_users, self.emb_dim]),
                                                         name='user_embedding')
+                                                      
             all_weights['item_embedding'] = tf.Variable(initializer([self.n_items, self.emb_dim]),
                                                         name='item_embedding')
             print('using xavier initialization')
@@ -123,7 +125,7 @@ class IMP_GCN(object):
         all_weights['b_gc'] = tf.Variable(initializer([1, self.group]), name='b_gc')
 
         self.weight_size_list = [self.emb_dim] + self.weight_size
-
+        tf.print(all_weights['W_gc_1'],all_weights['W_gc'])
         return all_weights
 
     def _split_A_hat(self, X):
@@ -266,6 +268,7 @@ class IMP_GCN(object):
         all_embeddings = tf.stack(all_embeddings, 1)
         all_embeddings = tf.reduce_mean(all_embeddings, axis=1, keepdims=False)
         u_g_embeddings, i_g_embeddings = tf.split(all_embeddings, [self.n_users, self.n_items], 0)
+        
         return u_g_embeddings, i_g_embeddings, A_fold_hat_group_filter, user_group_embeddings_sum
 
     def _create_lightgcn_embed(self):
@@ -289,6 +292,43 @@ class IMP_GCN(object):
         all_embeddings=tf.reduce_mean(all_embeddings,axis=1,keepdims=False)
         u_g_embeddings, i_g_embeddings = tf.split(all_embeddings, [self.n_users, self.n_items], 0)
         return u_g_embeddings, i_g_embeddings
+
+
+    def calc_ssl_loss(self):
+        '''
+        Calculating SSL loss
+        '''
+        # batch_users, _ = tf.unique(self.users)
+        user_emb1 = tf.nn.embedding_lookup(self.ua_embeddings_sub1, self.users)
+        user_emb2 = tf.nn.embedding_lookup(self.ua_embeddings_sub2, self.users)
+        normalize_user_emb1 = tf.nn.l2_normalize(user_emb1, 1)
+        normalize_user_emb2 = tf.nn.l2_normalize(user_emb2, 1)
+        
+        # batch_items, _ = tf.unique(self.pos_items)
+        item_emb1 = tf.nn.embedding_lookup(self.ia_embeddings_sub1, self.pos_items)
+        item_emb2 = tf.nn.embedding_lookup(self.ia_embeddings_sub2, self.pos_items)
+        normalize_item_emb1 = tf.nn.l2_normalize(item_emb1, 1)
+        normalize_item_emb2 = tf.nn.l2_normalize(item_emb2, 1)
+
+        normalize_user_emb2_neg = normalize_user_emb2
+        normalize_item_emb2_neg = normalize_item_emb2
+
+        pos_score_user = tf.reduce_sum(tf.multiply(normalize_user_emb1, normalize_user_emb2), axis=1)
+        ttl_score_user = tf.matmul(normalize_user_emb1, normalize_user_emb2_neg, transpose_a=False, transpose_b=True)
+
+        pos_score_item = tf.reduce_sum(tf.multiply(normalize_item_emb1, normalize_item_emb2), axis=1)
+        ttl_score_item = tf.matmul(normalize_item_emb1, normalize_item_emb2_neg, transpose_a=False, transpose_b=True)      
+
+        pos_score_user = tf.exp(pos_score_user / self.ssl_temp)
+        ttl_score_user = tf.reduce_sum(tf.exp(ttl_score_user / self.ssl_temp), axis=1)
+        pos_score_item = tf.exp(pos_score_item / self.ssl_temp)
+        ttl_score_item = tf.reduce_sum(tf.exp(ttl_score_item / self.ssl_temp), axis=1)
+
+        # ssl_loss = -tf.reduce_mean(tf.log(pos_score / ttl_score))
+        ssl_loss_user = -tf.reduce_sum(tf.log(pos_score_user / ttl_score_user))
+        ssl_loss_item = -tf.reduce_sum(tf.log(pos_score_item / ttl_score_item))
+        ssl_loss = self.ssl_reg * (ssl_loss_user + ssl_loss_item)
+        return ssl_loss
 
 
     def create_bpr_loss(self, users, pos_items, neg_items):

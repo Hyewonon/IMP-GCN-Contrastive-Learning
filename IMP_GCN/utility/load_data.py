@@ -31,7 +31,8 @@ class Data(object):
                     items = [int(i) for i in l[1:]]
                     uid = int(l[0])
                     self.exist_users.append(uid)
-                    self.n_items = max(self.n_items, max(items))
+                    if len(items) > 0:                    
+                      self.n_items = max(self.n_items, max(items))
                     self.n_users = max(self.n_users, uid)
                     self.n_train += len(items)
 
@@ -43,7 +44,8 @@ class Data(object):
                         items = [int(i) for i in l.split(' ')[1:]]
                     except Exception:
                         continue
-                    self.n_items = max(self.n_items, max(items))
+                    if len(items) > 0:    
+                      self.n_items = max(self.n_items, max(items))
                     self.n_test += len(items)
         self.n_items += 1
         self.n_users += 1
@@ -54,15 +56,15 @@ class Data(object):
             with open(test_file) as f_test:
                 for l in f_train.readlines():
                     if len(l) == 0: break
-                    l = l.strip('\n')
-                    items = [int(i) for i in l.split(' ')]
-                    uid, train_items = items[0], items[1:]
+                    l = l.strip('\n').split(' ')
+                    train_items = [int(i) for i in l[1:]]
+                    uid = int(l[0])
 
                     for i in train_items:
                         self.R[uid, i] = 1.
                         
                     self.train_items[uid] = train_items
-                    
+
                 for l in f_test.readlines():
                     if len(l) == 0: break
                     l = l.strip('\n')
@@ -162,6 +164,7 @@ class Data(object):
 
         def sample_pos_items_for_u(u, num):
             pos_items = self.train_items[u]
+            print(self.train_items)
             n_pos_items = len(pos_items)
             pos_batch = []
             while True:
