@@ -59,4 +59,10 @@ def parse_args():
     parser.add_argument('--test_flag', nargs='?', default='part',
                         help='Specify the test type from {part, full}, indicating whether the reference is done in mini-batch')
 
+    parser.add_argument('--ssl_reg', nargs='?', default=0.5,
+                        help='ssl loss reg')
+    parser.add_argument('--ssl_ratio', nargs='?', default=0.5,
+                        help='ssl loss reg')                    
+    parser.add_argument('--ssl_temp', nargs='?', default=0.5,
+                        help='ssl loss temperature hyper-parameter')
     return parser.parse_args()

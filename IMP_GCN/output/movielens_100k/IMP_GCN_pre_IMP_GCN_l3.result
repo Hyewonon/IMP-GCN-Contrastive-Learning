@@ -1,0 +1,4 @@
+embed_size=64, lr=0.0010, layer_size=[64,64,64], node_dropout=[0.1], mess_dropout=[0.1], regs=[1e-4], adj_type=pre
+	Best Iter=[23]@[5840.1]	recall=[0.38155	0.24931], precision=[0.19077	0.24931], hit=[0.97773	0.91835], ndcg=[0.36670	0.29358]
+embed_size=64, lr=0.0010, layer_size=[64,64,64], node_dropout=[0.1], mess_dropout=[0.1], regs=[1e-4], adj_type=pre
+	Best Iter=[21]@[2220.8]	recall=[0.38409	0.25143], precision=[0.19205	0.25143], hit=[0.98091	0.90774], ndcg=[0.36768	0.29428]

@@ -45,6 +45,9 @@ class IMP_GCN(object):
 
         self.verbose = args.verbose
 
+        self.ssl_temp = args.ssl_temp
+        self.ssl_ratio = args.ssl_ratio
+        self.ssl_reg = args.ssl_reg
         '''
         *********************************************************
         Create Placeholder for Input Data & Dropout.
@@ -68,8 +71,7 @@ class IMP_GCN(object):
         # initialization of model parameters
         self.weights = self._init_weights()
 
-        
-        self.ua_embeddings, self.ia_embeddings, self.A_fold_hat_group_filter, self.user_group_embeddings = self._create_imp_gcn_embed()
+        self.ua_embeddings, self.ia_embeddings, self.ua_embeddings_sub1, self.ia_embeddings_sub1,self.ua_embeddings_sub2, self.ia_embeddings_sub2, self.A_fold_hat_group_filter, self.user_group_embeddings = self._create_imp_gcn_embed()
         """
         *********************************************************
         Establish the final representations for user-item pairs in batch.
@@ -90,10 +92,11 @@ class IMP_GCN(object):
         *********************************************************
         Generate Predictions & Optimize via BPR loss.
         """
-        self.mf_loss, self.emb_loss, self.reg_loss = self.create_bpr_loss(self.u_g_embeddings,
+        self.ssl_loss = self.calc_ssl_loss()
+        self.bpr_loss, self.emb_loss, self.reg_loss = self.create_bpr_loss(self.u_g_embeddings,
                                                                           self.pos_i_g_embeddings,
                                                                           self.neg_i_g_embeddings)
-        self.loss = self.mf_loss + self.emb_loss + self.reg_loss
+        self.loss = self.bpr_loss + self.emb_loss + self.reg_loss + self.ssl_loss
 
         self.opt = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
 
@@ -209,7 +212,7 @@ class IMP_GCN(object):
         temp_embed = []
         for f in range(self.n_fold):
             temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[f], ego_embeddings))
-        user_group_embeddings_side = tf.concat(temp_embed, 0) + ego_embeddings
+        user_group_embeddings_side = tf.concat(temp_embed, 0) + ego_embeddings ## MLP input embedding (e_u0 + e_u1)
 
 
         user_group_embeddings_hidden_1 = tf.nn.leaky_relu(tf.matmul(user_group_embeddings_side, self.weights['W_gc_1']) + self.weights['b_gc_1'])
@@ -224,7 +227,7 @@ class IMP_GCN(object):
 
         #user_group_embeddings_hidden_d2 = tf.nn.dropout(user_group_embeddings_hidden_2, 0.8)
 
-        user_group_embeddings_sum = tf.matmul(user_group_embeddings_hidden_d1, self.weights['W_gc']) + self.weights['b_gc']
+        user_group_embeddings_sum = tf.matmul(user_group_embeddings_hidden_d1, self.weights['W_gc']) + self.weights['b_gc'] 
 
         # user 0-1
         a_top, a_top_idx = tf.nn.top_k(user_group_embeddings_sum, 1, sorted=False)
@@ -237,25 +240,28 @@ class IMP_GCN(object):
 
         # embedding transformation
         all_embeddings = [ego_embeddings]
-        temp_embed = []
-        for f in range(self.n_fold):
-            temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[f], ego_embeddings))
+#        temp_embed = []
+#        for f in range(self.n_fold):
+#            temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[f], ego_embeddings))
 
-        side_embeddings = tf.concat(temp_embed, 0)
-        all_embeddings += [side_embeddings]
+#        side_embeddings = tf.concat(temp_embed, 0) ### E1
+#        all_embeddings += [side_embeddings]  #### E0 + E1
 
-        ego_embeddings_g = []
-        for g in range(0,self.group):
-            ego_embeddings_g.append(ego_embeddings)
+#        ego_embeddings_g = []
+#        for g in range(0,self.group):
+#            ego_embeddings_g.append(ego_embeddings)
+        all_embeddings_sub1 = []
+        all_embeddings_sub2 = []
 
         ego_embeddings_f = []
         for k in range(1, self.n_layers):
+          # subgraph마다 convolution operation
             for g in range(0,self.group):
                 temp_embed = []
                 for f in range(self.n_fold):
-                    temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat_group[g][f], ego_embeddings_g[g]))
+                    temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat_group[g][f], ego_embeddings))
                 side_embeddings = tf.concat(temp_embed, 0)
-                ego_embeddings_g[g]=ego_embeddings_g[g] + side_embeddings
+                #ego_embeddings_g[g]+= side_embeddings    ## group마다 convolution operate
                 temp_embed = []
                 for f in range(self.n_fold):
                     temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[f], side_embeddings))
@@ -263,13 +269,38 @@ class IMP_GCN(object):
                     ego_embeddings_f.append(tf.concat(temp_embed, 0))
                 else:
                     ego_embeddings_f[g] = tf.concat(temp_embed, 0)
-            ego_embeddings = tf.reduce_sum(ego_embeddings_f, axis=0, keepdims=False)
+            # ego_embedding_f : Layer K에서 각 subgraph의 임베딩
+            all_embeddings_sub1 += [ego_embeddings_f[0]]
+            all_embeddings_sub2 += [ego_embeddings_f[1]]
+            # original graph convolution operation
+            temp_embed = []
+            for f in range(self.n_fold):
+              temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[f], ego_embeddings))
+            side_embeddings = tf.concat(temp_embed, 0)
+            ego_embeddings = side_embeddings
             all_embeddings += [ego_embeddings]
-        all_embeddings = tf.stack(all_embeddings, 1)
-        all_embeddings = tf.reduce_mean(all_embeddings, axis=1, keepdims=False)
+
+        all_embeddings = tf.stack(all_embeddings,1)
+        all_embeddings = tf.reduce_mean(all_embeddings,axis=1,keepdims=False)
         u_g_embeddings, i_g_embeddings = tf.split(all_embeddings, [self.n_users, self.n_items], 0)
+
+        all_embeddings_sub1 = tf.stack(all_embeddings_sub1, 1)
+        all_embeddings_sub1 = tf.reduce_mean(all_embeddings_sub1, axis=1, keepdims=False)
+        u_g_embeddings_sub1, i_g_embeddings_sub1 = tf.split(all_embeddings_sub1, [self.n_users, self.n_items], 0)
         
-        return u_g_embeddings, i_g_embeddings, A_fold_hat_group_filter, user_group_embeddings_sum
+        all_embeddings_sub2 = tf.stack(all_embeddings_sub2, 1)
+        all_embeddings_sub2 = tf.reduce_mean(all_embeddings_sub2, axis=1, keepdims=False)
+        u_g_embeddings_sub2, i_g_embeddings_sub2 = tf.split(all_embeddings_sub1, [self.n_users, self.n_items], 0)
+
+#            ego_embeddings = tf.reduce_sum(ego_embeddings_f, axis=0, keepdims=False)
+#            all_embeddings += [ego_embeddings]  ## Layer k 에서 G의 임베딩
+
+
+#        all_embeddings = tf.stack(all_embeddings, 1)
+#        all_embeddings = tf.reduce_mean(all_embeddings, axis=1, keepdims=False)
+#        u_g_embeddings, i_g_embeddings = tf.split(all_embeddings, [self.n_users, self.n_items], 0)
+        
+        return u_g_embeddings, i_g_embeddings, u_g_embeddings_sub1, i_g_embeddings_sub1, u_g_embeddings_sub2, i_g_embeddings_sub2, A_fold_hat_group_filter, user_group_embeddings_sum
 
     def _create_lightgcn_embed(self):
         if self.node_dropout_flag:
@@ -285,6 +316,7 @@ class IMP_GCN(object):
             temp_embed = []
             for f in range(self.n_fold):
                 temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[f], ego_embeddings))
+
             side_embeddings = tf.concat(temp_embed, 0)
             ego_embeddings = side_embeddings
             all_embeddings += [ego_embeddings]
@@ -293,41 +325,24 @@ class IMP_GCN(object):
         u_g_embeddings, i_g_embeddings = tf.split(all_embeddings, [self.n_users, self.n_items], 0)
         return u_g_embeddings, i_g_embeddings
 
-
     def calc_ssl_loss(self):
         '''
         Calculating SSL loss
         '''
-        # batch_users, _ = tf.unique(self.users)
-        user_emb1 = tf.nn.embedding_lookup(self.ua_embeddings_sub1, self.users)
-        user_emb2 = tf.nn.embedding_lookup(self.ua_embeddings_sub2, self.users)
-        normalize_user_emb1 = tf.nn.l2_normalize(user_emb1, 1)
-        normalize_user_emb2 = tf.nn.l2_normalize(user_emb2, 1)
-        
-        # batch_items, _ = tf.unique(self.pos_items)
         item_emb1 = tf.nn.embedding_lookup(self.ia_embeddings_sub1, self.pos_items)
         item_emb2 = tf.nn.embedding_lookup(self.ia_embeddings_sub2, self.pos_items)
         normalize_item_emb1 = tf.nn.l2_normalize(item_emb1, 1)
         normalize_item_emb2 = tf.nn.l2_normalize(item_emb2, 1)
-
-        normalize_user_emb2_neg = normalize_user_emb2
-        normalize_item_emb2_neg = normalize_item_emb2
-
-        pos_score_user = tf.reduce_sum(tf.multiply(normalize_user_emb1, normalize_user_emb2), axis=1)
-        ttl_score_user = tf.matmul(normalize_user_emb1, normalize_user_emb2_neg, transpose_a=False, transpose_b=True)
-
+        normalize_all_item_emb2 = tf.nn.l2_normalize(self.ia_embeddings_sub2, 1)
         pos_score_item = tf.reduce_sum(tf.multiply(normalize_item_emb1, normalize_item_emb2), axis=1)
-        ttl_score_item = tf.matmul(normalize_item_emb1, normalize_item_emb2_neg, transpose_a=False, transpose_b=True)      
-
-        pos_score_user = tf.exp(pos_score_user / self.ssl_temp)
-        ttl_score_user = tf.reduce_sum(tf.exp(ttl_score_user / self.ssl_temp), axis=1)
+        ttl_score_item = tf.matmul(normalize_item_emb1, normalize_all_item_emb2, transpose_a=False, transpose_b=True)
+            
         pos_score_item = tf.exp(pos_score_item / self.ssl_temp)
         ttl_score_item = tf.reduce_sum(tf.exp(ttl_score_item / self.ssl_temp), axis=1)
-
-        # ssl_loss = -tf.reduce_mean(tf.log(pos_score / ttl_score))
-        ssl_loss_user = -tf.reduce_sum(tf.log(pos_score_user / ttl_score_user))
         ssl_loss_item = -tf.reduce_sum(tf.log(pos_score_item / ttl_score_item))
-        ssl_loss = self.ssl_reg * (ssl_loss_user + ssl_loss_item)
+
+        ssl_loss = self.ssl_reg * ssl_loss_item
+
         return ssl_loss
 
 
@@ -341,16 +356,16 @@ class IMP_GCN(object):
         
         ## In the first version, we implement the bpr loss via the following codes:
         # maxi = tf.log(tf.nn.sigmoid(pos_scores - neg_scores))
-        # mf_loss = tf.negative(tf.reduce_mean(maxi))
+        # bpr_loss = tf.negative(tf.reduce_mean(maxi))
         
         # In the second version, we implement the bpr loss via the following codes to aviod 'NAN' loss during training:
-        mf_loss = tf.reduce_mean(tf.nn.softplus(-(pos_scores - neg_scores)))
+        bpr_loss = tf.reduce_mean(tf.nn.softplus(-(pos_scores - neg_scores)))
         
         emb_loss = self.decay * regularizer
 
         reg_loss = tf.constant(0.0, tf.float32, [1])
 
-        return mf_loss, emb_loss, reg_loss
+        return bpr_loss, emb_loss, reg_loss
 
     def _convert_sp_mat_to_sp_tensor(self, X):
         coo = X.tocoo().astype(np.float32)
@@ -455,20 +470,22 @@ if __name__ == '__main__':
 
     for epoch in range(args.epoch):
         t1 = time()
-        loss, mf_loss, emb_loss, reg_loss = 0., 0., 0., 0.
+        loss, bpr_loss, emb_loss, reg_loss, ssl_loss = 0., 0., 0., 0., 0.
         n_batch = data_generator.n_train // args.batch_size + 1
 
         for idx in range(n_batch):
             users, pos_items, neg_items = data_generator.sample()
-            _, batch_loss, batch_mf_loss, batch_emb_loss, batch_reg_loss, group_filter, user_group_embeddings = sess.run([model.opt, model.loss, model.mf_loss, model.emb_loss, model.reg_loss, model.A_fold_hat_group_filter, model.user_group_embeddings],
+            _, batch_loss, batch_bpr_loss, batch_emb_loss, batch_reg_loss, batch_ssl_loss, group_filter, user_group_embeddings = sess.run([model.opt, model.loss, model.bpr_loss, model.emb_loss,
+                               model.reg_loss, model.ssl_loss, model.A_fold_hat_group_filter, model.user_group_embeddings],
                                feed_dict={model.users: users, model.pos_items: pos_items,
                                           model.node_dropout: eval(args.node_dropout),
                                           model.mess_dropout: eval(args.mess_dropout),
                                           model.neg_items: neg_items})
             loss += batch_loss/n_batch
-            mf_loss += batch_mf_loss/n_batch
+            bpr_loss += batch_bpr_loss/n_batch
             emb_loss += batch_emb_loss/n_batch
             reg_loss += batch_reg_loss/n_batch
+            ssl_loss += batch_ssl_loss/n_batch
 
         if np.isnan(loss) == True:
             print('ERROR: loss is nan.')
@@ -477,8 +494,8 @@ if __name__ == '__main__':
         # print the test evaluation metrics each 10 epochs; pos:neg = 1:10.
         if (epoch + 1) % 10 != 0:
             if args.verbose > 0 and epoch % args.verbose == 0:
-                perf_str = 'Epoch %d [%.1fs]: train==[%.5f=%.5f + %.5f]' % (
-                    epoch, time() - t1, loss, mf_loss, reg_loss)
+                perf_str = 'Epoch %d [%.1fs]: train loss==[%.5f=%.5f + %.5f + %.5f]' % (
+                    epoch, time() - t1, loss, bpr_loss, reg_loss, ssl_loss)
                 print(perf_str)
             continue
 
@@ -495,9 +512,9 @@ if __name__ == '__main__':
         hit_loger.append(ret['hit_ratio'])
 
         if args.verbose > 0:
-            perf_str = 'Epoch %d [%.1fs + %.1fs]: train==[%.5f=%.5f + %.5f + %.5f], recall=[%.5f, %.5f], ' \
+            perf_str = 'Epoch %d [%.1fs + %.1fs]: train==[%.5f=%.5f + %.5f + %.5f + %.5f], recall=[%.5f, %.5f], ' \
                        'precision=[%.5f, %.5f], hit=[%.5f, %.5f], ndcg=[%.5f, %.5f]' % \
-                       (epoch, t2 - t1, t3 - t2, loss, mf_loss, emb_loss, reg_loss, ret['recall'][0], ret['recall'][-1],
+                       (epoch, t2 - t1, t3 - t2, loss, bpr_loss, emb_loss, reg_loss, ssl_loss, ret['recall'][0], ret['recall'][-1],
                         ret['precision'][0], ret['precision'][-1], ret['hit_ratio'][0], ret['hit_ratio'][-1],
                         ret['ndcg'][0], ret['ndcg'][-1])
             print(perf_str)

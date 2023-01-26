@@ -30,9 +30,8 @@ class Data(object):
                     l = l.strip('\n').split(' ')
                     items = [int(i) for i in l[1:]]
                     uid = int(l[0])
-                    self.exist_users.append(uid)
-                    if len(items) > 0:                    
-                      self.n_items = max(self.n_items, max(items))
+                    self.exist_users.append(uid)                   
+                    self.n_items = max(self.n_items, max(items))
                     self.n_users = max(self.n_users, uid)
                     self.n_train += len(items)
 
@@ -43,9 +42,8 @@ class Data(object):
                     try:
                         items = [int(i) for i in l.split(' ')[1:]]
                     except Exception:
-                        continue
-                    if len(items) > 0:    
-                      self.n_items = max(self.n_items, max(items))
+                        continue   
+                    self.n_items = max(self.n_items, max(items))
                     self.n_test += len(items)
         self.n_items += 1
         self.n_users += 1
@@ -63,7 +61,7 @@ class Data(object):
                     for i in train_items:
                         self.R[uid, i] = 1.
                         
-                    self.train_items[uid] = train_items
+                    self.train_items[uid] = train_items            
 
                 for l in f_test.readlines():
                     if len(l) == 0: break
@@ -144,7 +142,7 @@ class Data(object):
         norm_adj_mat = normalized_adj_single(adj_mat + sp.eye(adj_mat.shape[0]))
         mean_adj_mat = normalized_adj_single(adj_mat)
         
-        print('already normalize adjacency matrix', time() - t2)
+        print('already normalize adjacency matrix', norm_adj_mat.shape, time() - t2)
         return adj_mat.tocsr(), norm_adj_mat.tocsr(), mean_adj_mat.tocsr()
         
     def negative_pool(self):
@@ -164,11 +162,11 @@ class Data(object):
 
         def sample_pos_items_for_u(u, num):
             pos_items = self.train_items[u]
-            print(self.train_items)
             n_pos_items = len(pos_items)
             pos_batch = []
             while True:
                 if len(pos_batch) == num: break
+
                 pos_id = np.random.randint(low=0, high=n_pos_items, size=1)[0]
                 pos_i_id = pos_items[pos_id]
 
