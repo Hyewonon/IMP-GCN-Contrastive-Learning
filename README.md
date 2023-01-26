@@ -17,3 +17,4 @@ python IMP_GCN.py --dataset gowalla  --regs [1e-4] --embed_size 64 --layer_size 
 ```
 IMP_GCN_lab
 IMP_GCN_lab
+IMP_GCN_lab
