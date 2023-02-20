@@ -216,18 +216,18 @@ class IMP_GCN(object):
         temp_embed = []
         for f in range(self.n_fold):
             temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[f], ego_embeddings))
-        user_group_embeddings_side = tf.concat(temp_embed, 0) + ego_embeddings ## MLP input embedding (e_u0 + e_u1)
+        side_embeddings = tf.concat(temp_embed, 0)
+        user_group_embeddings_side = side_embeddings + ego_embeddings ## MLP input embedding (eo + e1)
 
 
         user_group_embeddings_hidden_1 = tf.nn.leaky_relu(tf.matmul(user_group_embeddings_side, self.weights['W_gc_1']) + self.weights['b_gc_1'])
-        user_group_embeddings_hidden_d1 = tf.nn.dropout(user_group_embeddings_hidden_1, 0.6)
+        #user_group_embeddings_hidden_d1 = tf.nn.dropout(user_group_embeddings_hidden_1, 0.6)
 
         user_group_embeddings_hidden_2 = tf.nn.leaky_relu(tf.matmul(user_group_embeddings_hidden_1, self.weights['W_gc_2']) + self.weights[
             'b_gc_2'])
-        #user_group_embeddings_hidden_2 = tf.matmul(user_group_embeddings_hidden_d1, self.weights['W_gc_2']) + self.weights[
-        #            'b_gc_2']
-        user_group_embeddings_hidden_d2 = tf.nn.dropout(user_group_embeddings_hidden_2, 0.8)
-        user_group_embeddings_sum = tf.matmul(user_group_embeddings_hidden_d2, self.weights['W_gc']) + self.weights['b_gc'] 
+
+        #user_group_embeddings_hidden_d2 = tf.nn.dropout(user_group_embeddings_hidden_2, 0.8)
+        user_group_embeddings_sum = tf.matmul(user_group_embeddings_hidden_2, self.weights['W_gc']) + self.weights['b_gc'] 
 
         # user 0-1
         a_top, a_top_idx = tf.nn.top_k(user_group_embeddings_sum, 1, sorted=False)
@@ -240,11 +240,11 @@ class IMP_GCN(object):
 
         # embedding transformation
         all_embeddings = [ego_embeddings]
-        temp_embed = []
-        for f in range(self.n_fold):
-            temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[f], ego_embeddings))
+        #temp_embed = []
+        #for f in range(self.n_fold):
+        #    temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[f], ego_embeddings))
 
-        side_embeddings = tf.concat(temp_embed, 0) ### E1
+        #side_embeddings = tf.concat(temp_embed, 0) ### E1
         all_embeddings += [side_embeddings]  #### E0 + E1
 
         ego_embeddings_g = []
@@ -281,69 +281,83 @@ class IMP_GCN(object):
 
         all_embeddings_sub1 = tf.stack(all_embeddings_sub1, 1)
         all_embeddings_sub1 = tf.reduce_mean(all_embeddings_sub1, axis=1, keepdims=False)
-        _, i_g_embeddings_sub1 = tf.split(all_embeddings_sub1, [self.n_users, self.n_items], 0)
+        u_g_embeddings_sub1, i_g_embeddings_sub1 = tf.split(all_embeddings_sub1, [self.n_users, self.n_items], 0)
         
         all_embeddings_sub2 = tf.stack(all_embeddings_sub2, 1)
         all_embeddings_sub2 = tf.reduce_mean(all_embeddings_sub2, axis=1, keepdims=False)
-        _, i_g_embeddings_sub2 = tf.split(all_embeddings_sub2, [self.n_users, self.n_items], 0)
-        
-        return u_g_embeddings, i_g_embeddings, i_g_embeddings_sub1, i_g_embeddings_sub2, A_fold_hat_group_filter, user_group_embeddings_sum
+        u_g_embeddings_sub2, i_g_embeddings_sub2 = tf.split(all_embeddings_sub2, [self.n_users, self.n_items], 0)
 
-    def _create_lightgcn_embed(self):
-        if self.node_dropout_flag:
-            A_fold_hat = self._split_A_hat_node_dropout(self.norm_adj)
-        else:
-            A_fold_hat = self._split_A_hat(self.norm_adj)
-        
-        ego_embeddings = tf.concat([self.weights['user_embedding'], self.weights['item_embedding']], axis=0)
-        all_embeddings = [ego_embeddings]
-        
-        for k in range(0, self.n_layers):
-
-            temp_embed = []
-            for f in range(self.n_fold):
-                temp_embed.append(tf.sparse_tensor_dense_matmul(A_fold_hat[f], ego_embeddings))
-
-            side_embeddings = tf.concat(temp_embed, 0)
-            ego_embeddings = side_embeddings
-            all_embeddings += [ego_embeddings]
-        all_embeddings=tf.stack(all_embeddings,1)
-        all_embeddings=tf.reduce_sum(all_embeddings,axis=1,keepdims=False)
-        u_g_embeddings, i_g_embeddings = tf.split(all_embeddings, [self.n_users, self.n_items], 0)
-        return u_g_embeddings, i_g_embeddings
-
+        return u_g_embeddings, i_g_embeddings, u_g_embeddings_sub1, i_g_embeddings_sub1,u_g_embeddings_sub2, i_g_embeddings_sub2, A_fold_hat_group_filter, user_group_embeddings_sum
+    
     def calc_ssl_loss(self,item_emb1, item_emb2):
         '''
         Calculating SSL loss
-        '''       
-        # batch_items, _ = tf.unique(self.pos_items)    
+        '''        
         normalize_item_emb1 = tf.nn.l2_normalize(item_emb1, 1)
         normalize_item_emb2 = tf.nn.l2_normalize(item_emb2, 1)
-
-        normalize_item_emb2_neg = normalize_item_emb2
-        pos_score_item = tf.reduce_sum(tf.multiply(normalize_item_emb1, normalize_item_emb2), axis=1)
-        ttl_score_item = tf.matmul(normalize_item_emb1, normalize_item_emb2_neg, transpose_a=False, transpose_b=True)      
-
-        pos_score_item = tf.exp(pos_score_item / self.ssl_temp)
-        ttl_score_item = tf.reduce_sum(tf.exp(ttl_score_item / self.ssl_temp), axis=1)
-
-        # ssl_loss = -tf.reduce_mean(tf.log(pos_score / ttl_score))
-        ssl_loss_item = -tf.reduce_sum(tf.log(pos_score_item / ttl_score_item))
-        #normalize_item_emb1 = tf.nn.l2_normalize(item_emb1, 1)
-        #normalize_item_emb2 = tf.nn.l2_normalize(item_emb2, 1)
-        #normalize_all_item_emb2 = tf.nn.l2_normalize(self.ia_embeddings_sub2, 1)
-        #pos_score_item = tf.reduce_sum(tf.multiply(normalize_item_emb1, normalize_item_emb2), axis=1)
-        #ttl_score_item = tf.matmul(normalize_item_emb1, normalize_all_item_emb2, transpose_a=False, transpose_b=True)
+        normalize_all_item_emb2 = tf.nn.l2_normalize(self.ia_embeddings_sub2, 1)
+        normalize_all_item_emb1 = tf.nn.l2_normalize(self.ia_embeddings_sub1, 1)
+         
+        item_sub2_filter = self.get_item_filter(self.ia_embeddings_sub1, self.ia_embeddings_sub2)
+        normalize_all_item_emb2 *= item_sub2_filter
+        item_sub1_filter = self.get_item_filter(self.ia_embeddings_sub2, self.ia_embeddings_sub1)
+        normalize_all_item_emb1 *= item_sub1_filter     
+       
+        pos_score_item_1 = tf.reduce_sum(tf.multiply(normalize_item_emb1, normalize_item_emb2), axis=1)
+        ttl_score_item_1 = tf.matmul(normalize_item_emb1, normalize_all_item_emb2, transpose_a=False, transpose_b=True)
             
-        #pos_score_item = tf.exp(pos_score_item / self.ssl_temp)
-        #ttl_score_item = tf.reduce_sum(tf.exp(ttl_score_item / self.ssl_temp), axis=1)
-        #ssl_loss_item = -tf.reduce_sum(tf.log(pos_score_item / ttl_score_item))
-        ssl_loss_item = ssl_loss_item/self.batch_size
+        pos_score_item_1 = tf.exp(pos_score_item_1 / self.ssl_temp)
+        ttl_score_item_1 = tf.reduce_sum(tf.exp(ttl_score_item_1 / self.ssl_temp), axis=1)
+        ssl_loss_item_1 = -tf.reduce_sum(tf.log(pos_score_item_1 / ttl_score_item_1))
+        
+        pos_score_item_2 = tf.reduce_sum(tf.multiply(normalize_item_emb2, normalize_item_emb1), axis=1)
+        ttl_score_item_2 = tf.matmul(normalize_item_emb2, normalize_all_item_emb1, transpose_a=False, transpose_b=True)
+            
+        pos_score_item_2 = tf.exp(pos_score_item_2 / self.ssl_temp)
+        ttl_score_item_2 = tf.reduce_sum(tf.exp(ttl_score_item_2 / self.ssl_temp), axis=1)
+        ssl_loss_item_2 = -tf.reduce_sum(tf.log(pos_score_item_2 / ttl_score_item_2))
 
+        ssl_loss_item = (ssl_loss_item_1 + ssl_loss_item_2)/self.batch_size
         ssl_loss = self.ssl_reg * ssl_loss_item
 
         return ssl_loss
+    
+    def count_overlap(self,filter):
+      # how many overlap items?
+        row = 0
+        num_overlap_batch, num_item1_batch, num_item2_batch = 0, 0, 0
+        for row in range(self.n_users):
+          is_zero_1 = tf.reduce_all(tf.equal(self.ua_embeddings_sub1[row], 0.))
+          is_zero_2 = tf.reduce_all(tf.equal(self.ua_embeddings_sub2[row], 0.))
+          num_item1_batch += tf.where(tf.equal(is_zero_1,True),0, 1)
+          num_item2_batch += tf.where(tf.equal(is_zero_2,True),0, 1)
+          #num_overlap_batch += tf.where(tf.logical_or(is_zero_1, is_zero_2),0 ,1)
+        num_overlap_batch = tf.math.count_nonzero(tf.equal(filter[:,0], 0.))
+        num_overlap = [num_item1_batch, num_item2_batch, num_overlap_batch]
+        return num_overlap
 
+    def get_item_filter(self, item_emb1, item_emb2):
+        item_filter = tf.ones(tf.shape(item_emb2), dtype=tf.float32)
+        idx = tf.constant(0)
+        condition = lambda idx, item_filter : tf.less(idx, self.batch_size)
+        body = lambda idx, item_filter: (idx + 1, self.update_filter(item_filter, item_emb1, item_emb2, idx))
+        _, item_filter = tf.while_loop(condition, body, [idx, item_filter])
+        return item_filter
+
+    def update_filter(self, item_filter, item_emb1, item_emb2, idx):
+        pos_item = self.pos_items[idx]    
+        is_zero_1 = tf.reduce_all(tf.equal(item_emb1[pos_item], 0.))
+        is_zero_2 = tf.reduce_all(tf.equal(item_emb2[pos_item], 0.))
+        is_in_sub = tf.where(tf.logical_or(is_zero_1, is_zero_2),0 , 1)
+   
+        def update_filter_by_indice(item_sub2_filter, pos_item):
+          indices = [pos_item]
+          update = tf.zeros(tf.shape(item_sub2_filter)[1], dtype = tf.float32)
+          update_item_filter = tf.tensor_scatter_nd_update(item_sub2_filter, [indices], [update])
+          return update_item_filter
+
+        item_filter = tf.where(tf.equal(is_in_sub, 1), update_filter_by_indice(item_filter, pos_item), item_filter)
+        return item_filter
 
     def create_bpr_loss(self, users, pos_items, neg_items):
         pos_scores = tf.reduce_sum(tf.multiply(users, pos_items), axis=1)
