@@ -4,8 +4,10 @@
 ##ignore file
 #commit colab
 for_github_commit.ipynb
-IMP_GCN_x.py
-IMP_GCN.py
+IMP_GCN/IMP_GCN_x.py
+IMP_GCN/IMP_GCN.py
+output
+weights
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
