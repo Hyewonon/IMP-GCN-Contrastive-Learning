@@ -21,7 +21,7 @@ def parse_args():
                         help='Number of group.')
     parser.add_argument('--embed_size', type=int, default=64,
                         help='Embedding size.')
-    parser.add_argument('--layer_size', nargs='?', default='[64,64,64]',
+    parser.add_argument('--layer_size', nargs='?', default='[64,64,64,64,64,64]',
                         help='Output sizes of every layer')
     parser.add_argument('--batch_size', type=int, default=1024,
                         help='Batch size.')
@@ -59,10 +59,14 @@ def parse_args():
     parser.add_argument('--test_flag', nargs='?', default='part',
                         help='Specify the test type from {part, full}, indicating whether the reference is done in mini-batch')
 
-    parser.add_argument('--ssl_reg', nargs='?', default=0.5,
-                        help='ssl loss reg')
-    parser.add_argument('--ssl_ratio', nargs='?', default=0.5,
-                        help='ssl loss reg')                    
-    parser.add_argument('--ssl_temp', nargs='?', default=0.5,
-                        help='ssl loss temperature hyper-parameter')
+    parser.add_argument('--cl_reg_s',  type = float, default=0.5,
+                        help='subgrpah generation cl loss reg')
+    parser.add_argument('--cl_ratio', nargs='?', default=0.5,
+                        help='cl loss ratio')                    
+    parser.add_argument('--cl_temp_s',  type = float, default=0.5,
+                        help='subgraph generation cl loss temperature hyper-parameter')
+    parser.add_argument('--cl_reg_i',  type = float, default=0.5,
+                        help='overlap item cl loss reg')
+    parser.add_argument('--cl_temp_i',  type = float, default=0.5,
+                        help='overlap item cl loss temperature hyper-parameter')
     return parser.parse_args()
