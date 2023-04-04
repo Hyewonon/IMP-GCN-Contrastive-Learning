@@ -1,7 +1,7 @@
 '''
 @author: Liu Fan
 '''
-### 내적 후 l2 정규화
+
 import tensorflow.compat.v1 as tf
 import os
 import sys
@@ -196,25 +196,33 @@ class IMP_GCN(object):
 
         return A_fold_hat_group, A_fold_hat_group_filter
 
+    # def mul_A_sim(self, ego_embeddings, A_fold_hat):
+    #     A_fold_hat_sim, similarity = [], []
 
+    #     fold_len = (self.n_users + self.n_items) // self.n_fold
+    #     for i_fold in range(self.n_fold):
+    #         start = i_fold * fold_len
+    #         if i_fold == self.n_fold - 1:
+    #             end = self.n_users + self.n_items
+    #         else:
+    #             end = (i_fold + 1) * fold_len
+    #         similarity.append(tf.matmul(ego_embeddings[start:end], ego_embeddings, transpose_b = True))
+
+    #     for f in range(self.n_fold):
+    #       similarity_value = tf.nn.l2_normalize(tf.gather_nd(similarity[f], A_fold_hat[f].indices))
+    #       mul_A_similarity = tf.multiply(similarity_value, A_fold_hat[f].values)
+    #       A_fold_hat_sim.append(tf.sparse.SparseTensor(A_fold_hat[f].indices, mul_A_similarity, A_fold_hat[f].dense_shape))
+    #     return A_fold_hat_sim
+    
     def mul_A_sim(self, ego_embeddings, A_fold_hat):
-        A_fold_hat_sim, similarity = [], []
-
-        fold_len = (self.n_users + self.n_items) // self.n_fold
-        for i_fold in range(self.n_fold):
-            start = i_fold * fold_len
-            if i_fold == self.n_fold - 1:
-                end = self.n_users + self.n_items
-            else:
-                end = (i_fold + 1) * fold_len
-            similarity.append(tf.matmul(ego_embeddings[start:end], ego_embeddings, transpose_b = True))
-
-        for f in range(self.n_fold):
-          similarity_value = tf.nn.l2_normalize(tf.gather_nd(similarity[f], A_fold_hat[f].indices))
-          mul_A_similarity = tf.multiply(similarity_value, A_fold_hat[f].values)
-          A_fold_hat_sim.append(tf.sparse.SparseTensor(A_fold_hat[f].indices, mul_A_similarity, A_fold_hat[f].dense_shape))
-        return A_fold_hat_sim
-
+      A_fold_hat_sim = []
+      for f in range(self.n_fold):
+        ego_embeddings_1 = tf.gather(ego_embeddings, A_fold_hat[f].indices[:,0])
+        ego_embeddings_2 = tf.gather(ego_embeddings, A_fold_hat[f].indices[:,1])
+        similarity =  tf.nn.l2_normalize(tf.reduce_sum(tf.multiply(ego_embeddings_1, ego_embeddings_2), axis = 1))
+        mul_A_similarity = tf.multiply(similarity, A_fold_hat[f].values)
+        A_fold_hat_sim.append(tf.sparse.SparseTensor(A_fold_hat[f].indices, mul_A_similarity, A_fold_hat[f].dense_shape))
+      return A_fold_hat_sim
 
     def _split_A_hat_node_dropout(self, X):
         A_fold_hat = []
@@ -442,7 +450,7 @@ def load_pretrained_data():
 
 if __name__ == '__main__':
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id
 
     config = dict()
     config['n_users'] = data_generator.n_users

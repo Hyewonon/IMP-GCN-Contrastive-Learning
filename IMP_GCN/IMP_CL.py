@@ -297,14 +297,16 @@ class IMP_GCN(object):
         '''
         normalize_item_emb, normalize_all_item_emb, pos_score_item, ttl_score_item, cl_loss_item = [], [], [], [], []
         is_zero, ttl_score_sub = 0, 0.
+        
+        normalize_user_group = tf.nn.l2_normalize(self.user_group_embeddings, 1)
+        normalize_user_group_split = tf.split(normalize_user_group, self.group, axis = 1)
 
         # get filter to mask overlap items & subgraph items contrastive learning
         for g in range(0,self.group):
           normalize_item_emb.append(tf.nn.l2_normalize(item_emb['sub%d' % g], 1))
           normalize_all_item_emb.append(tf.nn.l2_normalize(self.ia_embeddings_sub['sub%d' % g], 1))
-  
-          user_group_emb = self.user_group_embeddings[:, g]
-          is_zero += tf.cast(tf.reduce_sum(tf.cast(tf.equal(user_group_emb, 0.), tf.int32)) == tf.shape(user_group_emb)[0], dtype=tf.int32)
+
+          is_zero += tf.cast(tf.reduce_sum(tf.cast(tf.equal(normalize_user_group_split[g], 0.), tf.int32)) == tf.shape(normalize_user_group_split[g])[0], dtype=tf.int32)
 
           if g+1 != self.group:
             sub_item_filter = self.get_item_filter(self.ia_embeddings_sub['sub%d' % g], self.ia_embeddings_sub['sub%d' % (g+1)])
@@ -325,18 +327,17 @@ class IMP_GCN(object):
           cl_loss_item.append(tf.reduce_sum(tf.log(pos_score_item[g] / ttl_score_item[g])))
           
         # subgraph representation contrastive learning
-        normalize_user_group = tf.nn.l2_normalize(self.user_group_embeddings, 1)
-        
-        if is_zero !=0:
+
+        if is_zero != 0:
           cl_loss_sub = 0
       
         else:
           for g in range(0, self.group):
             if g+1 != self.group:
-              ttl_score = tf.reduce_sum(tf.multiply(normalize_user_group[g], normalize_user_group[g+1]))
+              ttl_score = tf.reduce_sum(tf.multiply(normalize_user_group_split[g], normalize_user_group_split[g+1]))
               ttl_score_sub += tf.exp(ttl_score/self.cl_temp_s)
             else:
-              ttl_score = tf.reduce_sum(tf.multiply(normalize_user_group[g], normalize_user_group[0]))
+              ttl_score = tf.reduce_sum(tf.multiply(normalize_user_group_split[g], normalize_user_group_split[0]))
               ttl_score_sub += tf.exp(ttl_score/self.cl_temp_s)  
             pos_score_sub = tf.exp(1/self.cl_temp_s)
   
@@ -347,7 +348,6 @@ class IMP_GCN(object):
         
         cl_loss_item = -tf.reduce_sum(cl_loss_item)/(self.group * self.batch_size)
         cl_loss = (self.cl_reg_i * cl_loss_item) + (self.cl_reg_s * cl_loss_sub)
-        cl_loss = tf.debugging.check_numerics(cl_loss, "cl_loss has numerical issues")
         return cl_loss
 
 
@@ -372,22 +372,6 @@ class IMP_GCN(object):
         mask = tf.transpose([mask], perm=[1, 0])
         sub_item_filter = tf.tile(mask,[1,tf.shape(item_emb2)[1]])
         return sub_item_filter
-
-    # def update_filter(self, item_filter, item_emb1, item_emb2, idx):
-    #     pos_item = self.pos_items[idx]    
-    #     sum_ = tf.reduce_sum(tf.multiply(item_emb1[pos_item], item_emb2[pos_item]))
-    
-    #     # Create boolean mask where sum_ is non-zero
-    #     is_in_sub = tf.not_equal(sum_, 0.)
-   
-    #     def update_filter_by_indice(sub_item_filter, pos_item):
-    #       indices = [pos_item]
-    #       update = tf.zeros(tf.shape(sub_item_filter)[1], dtype = tf.float32)
-    #       update_item_filter = tf.tensor_scatter_nd_update(sub_item_filter, [indices], [update])
-    #       return update_item_filter
-
-    #     item_filter = tf.where(is_in_sub, update_filter_by_indice(item_filter, pos_item), item_filter)
-    #     return item_filter
 
     def create_bpr_loss(self, users, pos_items, neg_items):
         pos_scores = tf.reduce_sum(tf.multiply(users, pos_items), axis=1)
