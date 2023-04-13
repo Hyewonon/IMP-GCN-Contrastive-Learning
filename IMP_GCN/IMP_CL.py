@@ -305,48 +305,39 @@ class IMP_GCN(object):
         for g in range(0,self.group):
           normalize_item_emb.append(tf.nn.l2_normalize(item_emb['sub%d' % g], 1))
           normalize_all_item_emb.append(tf.nn.l2_normalize(self.ia_embeddings_sub['sub%d' % g], 1))
+  
+          user_group_emb = self.user_group_embeddings[:, g]
+          is_zero += tf.cast(tf.reduce_sum(tf.cast(tf.equal(user_group_emb, 0.), tf.int32)) == tf.shape(user_group_emb)[0], dtype=tf.int32)
 
-          is_zero += tf.cast(tf.reduce_sum(tf.cast(tf.equal(normalize_user_group_split[g], 0.), tf.int32)) == tf.shape(normalize_user_group_split[g])[0], dtype=tf.int32)
+        for g1 in range(0,self.group):  
+          for g2 in range(0, self.group):
+            if g2 != g:
+              sub_item_filter = self.get_item_filter(self.ia_embeddings_sub['sub%d' % g1], self.ia_embeddings_sub['sub%d' % g2])
+              normalize_all_item_emb[g1] *= sub_item_filter
+              pos_score_item = tf.reduce_sum(tf.multiply(normalize_item_emb[g1], normalize_item_emb[g2]), axis=1)
+              ttl_score_item = tf.matmul(normalize_item_emb[g1], normalize_all_item_emb[g2], transpose_a=False, transpose_b=True)
 
-          if g+1 != self.group:
-            sub_item_filter = self.get_item_filter(self.ia_embeddings_sub['sub%d' % g], self.ia_embeddings_sub['sub%d' % (g+1)])
-          else:
-            sub_item_filter = self.get_item_filter(self.ia_embeddings_sub['sub%d' % g], self.ia_embeddings_sub['sub0'])
-          normalize_all_item_emb[g] *= sub_item_filter
-
-        for g in range(0,self.group):
-          if g+1 != self.group:
-            pos_score_item.append(tf.reduce_sum(tf.multiply(normalize_item_emb[g], normalize_item_emb[g+1]), axis=1))
-            ttl_score_item.append(tf.matmul(normalize_item_emb[g], normalize_all_item_emb[g+1], transpose_a=False, transpose_b=True))
-          else:
-            pos_score_item.append(tf.reduce_sum(tf.multiply(normalize_item_emb[g], normalize_item_emb[0]), axis=1))
-            ttl_score_item.append(tf.matmul(normalize_item_emb[g], normalize_all_item_emb[0], transpose_a=False, transpose_b=True))
-            
-          pos_score_item[g] = tf.exp(pos_score_item[g] / self.cl_temp_i)
-          ttl_score_item[g] = tf.reduce_sum(tf.exp(ttl_score_item[g] / self.cl_temp_i), axis=1)
-          cl_loss_item.append(tf.reduce_sum(tf.log(pos_score_item[g] / ttl_score_item[g])))
-          
+              pos_score_item = tf.exp(pos_score_item / self.cl_temp_i)
+              ttl_score_item = tf.reduce_sum(tf.exp(ttl_score_item / self.cl_temp_i), axis=1)
+              cl_loss_item.append(tf.reduce_sum(tf.log(pos_score_item / ttl_score_item)))
         # subgraph representation contrastive learning
 
         if is_zero != 0:
           cl_loss_sub = 0
       
         else:
-          for g in range(0, self.group):
-            if g+1 != self.group:
-              ttl_score = tf.reduce_sum(tf.multiply(normalize_user_group_split[g], normalize_user_group_split[g+1]))
-              ttl_score_sub += tf.exp(ttl_score/self.cl_temp_s)
-            else:
-              ttl_score = tf.reduce_sum(tf.multiply(normalize_user_group_split[g], normalize_user_group_split[0]))
-              ttl_score_sub += tf.exp(ttl_score/self.cl_temp_s)  
-            pos_score_sub = tf.exp(1/self.cl_temp_s)
+          pos_score_sub = tf.exp(1/self.cl_temp_s)
+          entropy = self.calc_entropy(normalize_user_group)
+          for g1 in range(0, self.group):
+            for g2 in range(0, self.group):
+              if g2 != g:
+                ttl_score = tf.reduce_sum(tf.multiply(normalize_user_group_split[g1], normalize_user_group_split[g2]))
+                ttl_score_sub += tf.exp(ttl_score/self.cl_temp_s)
   
           cl_loss_sub = -tf.reduce_sum(tf.log(pos_score_sub / ttl_score_sub))
-          entropy = self.calc_entropy(normalize_user_group)
-            
           cl_loss_sub = cl_loss_sub/self.group + entropy
         
-        cl_loss_item = -tf.reduce_sum(cl_loss_item)/(self.group * self.batch_size)
+        cl_loss_item = -tf.reduce_sum(cl_loss_item)/(self.group * (self.group - 1) * self.batch_size)
         cl_loss = (self.cl_reg_i * cl_loss_item) + (self.cl_reg_s * cl_loss_sub)
         return cl_loss
 
