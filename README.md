@@ -1,4 +1,4 @@
-# IMPGCN with Contrastive Learning for Recommendation
+# IMP-GCN with Contrastive Learning for Recommendation
 
 This is the Tensorflow implementation for KCC 2023 paper :
 > 장혜원, 황혜수.(2023). 추천 시스템을 위한 관심사 인지 그래프 합성곱 신경망의 대조 학습 기법. 한국정보과학회 학술발표논문집, 제주. <br>
